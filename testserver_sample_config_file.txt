@@ -1,0 +1,33 @@
+# ipsec.conf - strongSwan IPsec configuration file
+
+# basic configuration
+
+config setup
+    charondebug="ike 2, knl 2, cfg 2"
+    uniqueids=no
+
+conn %default
+    ikelifetime=28800s
+    keylife=3600s
+    rekeymargin=3m
+    keyingtries=1
+    keyexchange=ikev2
+    authby=psk
+    mobike=no
+
+conn nbc-to-lolla
+    left=10.0.38.237                 # ← updated private IP
+    leftid=18.198.204.224            # public IP (unchanged)
+    leftsubnet=18.198.204.224/32
+    leftfirewall=yes
+    right=102.212.82.5
+    rightid=10.100.0.17
+    rightsubnet=196.45.159.14/32,196.45.159.17/32
+    auto=start
+    type=tunnel
+    ike=aes256-sha256-ecp384!
+    esp=aes256-sha256-ecp384!
+    dpdaction=restart
+    dpddelay=30s
+    dpdtimeout=120s
+
