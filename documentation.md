@@ -124,9 +124,7 @@ conn nbc-to-lolla
 
 ## Step 4: Generate and Set the Pre-Shared Key (PSK)
 
-### 4.1 Generate a Strong PSK
-
-Generate a secure PSK. Choose one of the methods below.
+### 4.1 Generate a Strong and secure PSK
 
 #### Use `openssl`
 
