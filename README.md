@@ -229,7 +229,7 @@ e.g., sudo ufw allow from 41.139.171.245 to any port 22 proto tcp
 sudo ufw allow from 102.212.82.5 to any port 500 proto udp
 sudo ufw allow from 102.212.82.5 to any port 4500 proto udp
 
-# (Optional) Allow inbound test port 7782 from NBC subnets
+# Allow inbound test port 7782 from NBC subnets
 sudo ufw allow from 196.45.159.14 to any port 7782 proto tcp
 sudo ufw allow from 196.45.159.17 to any port 7782 proto tcp
 ```
