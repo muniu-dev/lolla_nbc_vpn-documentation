@@ -1,14 +1,17 @@
 # StrongSwan IPsec VPN Setup for AWS EC2 (Site‑to‑Site with NBC Bank)
 
+> **Note:** This documentation covers the **NBC Bank** setup first (end‑to‑end, as deployed and working in PROD).  
+> **Part 2** at the end shows how to **add a second partner bank — Stanbic Bank** — without disturbing the working NBC tunnel.
+
 ## Overview
 
 This document provides a step‑by‑step guide to replicate the IPsec IKEv2 VPN tunnel between an **AWS EC2 Ubuntu instance** (running StrongSwan) and the **FortiGate firewall** at NBC Bank. The setup is identical for both **UAT** and **PROD** environments; you only need to adjust the IP addresses.
 
 ### Architecture Summary
 
-- The EC2 instance has a **private IP** (e.g., `10.0.38.237`) and a **public IP** (e.g., `18.198.204.224`) via AWS NAT.
+- The EC2 instance has a **private IP** (e.g., `10.0.4.83`) and a **public IP** (e.g., `63.178.83.38`) via AWS NAT.
 - StrongSwan binds to the private IP, but presents the public IP as its identity and traffic selector.
-- NBC’s FortiGate uses the public IP as the remote address in Phase 2.
+- NBC’s FortiGate uses the public IP as the remote address in Phase 2.
 - A loopback alias on the server ensures the kernel accepts packets destined to the public IP.
 
 ---
@@ -51,11 +54,11 @@ ipsec version
 
 Output should show `Linux StrongSwan U5.9.12/K6.8.0....`.
 
-- If you do not get the above output, run
-```bash
-sudo apt install strongswan-starter -y
-```
-Then verify the installation ```ipsec version ```
+- If you do not get the above output, run:
+  ```bash
+  sudo apt install strongswan-starter -y
+  ```
+  Then verify: `ipsec version`
 
 ---
 
@@ -97,9 +100,9 @@ conn %default
     mobike=no
 
 conn nbc-to-lolla
-    left=<PRIVATE_IP>                 # e.g., 10.0.38.237
-    leftid=<PUBLIC_IP>                # e.g., 18.198.204.224
-    leftsubnet=<PUBLIC_IP>/32         # e.g., 18.198.204.224/32
+    left=<PRIVATE_IP>                 # e.g., 10.0.4.83
+    leftid=<PUBLIC_IP>                # e.g., 63.178.83.38
+    leftsubnet=<PUBLIC_IP>/32         # e.g., 63.178.83.38/32
     leftfirewall=yes
     right=102.212.82.5
     rightid=10.100.0.17               # NBC internal tunnel ID – do not change
@@ -118,7 +121,42 @@ conn nbc-to-lolla
 > - `leftid` and `leftsubnet` must be the **public IP** (the one the bank will see).  
 > - The `!` after algorithms enforces strict matching – keep it to ensure compatibility.
 
-```ctrl+O ```, ```Enter```, then ```ctrl+X ``` to Save and exit 
+Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
+
+### Reference: Final Working NBC Config (PROD)
+
+For your reference, this is the exact config that is deployed and working on the PROD server (`63.178.83.38`):
+
+```
+config setup
+    charondebug="ike 2, knl 2, cfg 2"
+    uniqueids=no
+
+conn %default
+    ikelifetime=28800s
+    keylife=3600s
+    rekeymargin=3m
+    keyingtries=1
+    keyexchange=ikev2
+    authby=psk
+    mobike=no
+
+conn nbc-to-lolla
+    left=10.0.4.83
+    leftid=63.178.83.38
+    leftsubnet=63.178.83.38/32
+    leftfirewall=yes
+    right=102.212.82.5
+    rightid=10.100.0.17
+    rightsubnet=196.45.159.14/32,196.45.159.17/32
+    auto=start
+    type=tunnel
+    ike=aes256-sha256-ecp384!
+    esp=aes256-sha256-ecp384!
+    dpdaction=restart
+    dpddelay=30s
+    dpdtimeout=120s
+```
 
 ---
 
@@ -126,7 +164,7 @@ conn nbc-to-lolla
 
 ### 4.1 Generate a Strong and Secure PSK
 
-#### Use `openssl`
+Use `openssl`:
 
 ```bash
 openssl rand -base64 32
@@ -138,7 +176,7 @@ openssl rand -base64 32
 0hpGlESarMA2rGILIabqmdM+I6Ov3GHO61AbX4qwS7U=
 ```
 
-This generates a 32-byte (256-bit) random key encoded in Base64. It is strong enough for production use.
+This generates a 32‑byte (256‑bit) random key encoded in Base64. It is strong enough for production use.
 
 ### 4.2 Save the PSK Securely
 
@@ -152,7 +190,7 @@ Once you have generated the PSK, **save it in a secure location** (e.g., a passw
 | Environment | Server IP | PSK |
 | --- | --- | --- |
 | UAT | 172.104.243.47 | `0hpGlESarMA2rGILIabqmdM+I6Ov3GHO61AbX4qwS7U=` |
-| PROD | 63.178.83.38 | `xK9mPqR5tNvW8zYbA2cF6hJ4sT3uM7pL` |
+| PROD | 63.178.83.38 | `<PSK_NBC_PROD>` |
 | Test Server | 18.198.204.224 | `lolla_nbc=test123` |
 
 ### 4.3 Set the PSK in `/etc/ipsec.secrets`
@@ -194,9 +232,10 @@ sudo chmod 600 /etc/ipsec.secrets
 **DO NOT send the PSK in plain email or inside the configuration file.** Use one of these secure methods:
 
 1. **Encrypted email** (PGP/GPG) – if both parties support it.
-2. **Signal / WhatsApp** – end-to-end encrypted messages.
+2. **Signal / WhatsApp** – end‑to‑end encrypted messages.
 3. **Phone call** – dictate the PSK verbally.
 4. **Secure file transfer** (e.g., encrypted ZIP with a separate password).
+
 > **Security:** The PSK must match exactly what is configured on NBC’s FortiGate. Exchange it securely via encrypted communication.
 
 ---
@@ -204,6 +243,8 @@ sudo chmod 600 /etc/ipsec.secrets
 ## Step 5: Firewall Configuration
 
 We will enable `ufw` **without locking ourselves out** by first allowing our current SSH client IP.
+
+> **Note:** If you rely solely on **AWS Security Groups** (Step 6), you can skip this step. However, running both provides defence‑in‑depth.
 
 ### 5.1 Find UAT/PROD Current SSH Client IP
 
@@ -218,12 +259,12 @@ Note down this IP – you will allow it explicitly.
 ### 5.2 Add Firewall Rules (Before Enabling)
 
 ```bash
-#Example: If the output from step 5.1 was 41.139.171.245
+# Example: If the output from step 5.1 was 41.139.171.245
 
 # Allow SSH from your specific client IP
 sudo ufw allow from <YOUR_CLIENT_IP> to any port 22 proto tcp
-
-e.g., sudo ufw allow from 41.139.171.245 to any port 22 proto tcp
+# e.g.
+sudo ufw allow from 41.139.171.245 to any port 22 proto tcp
 
 # Allow VPN ports from NBC's public IP
 sudo ufw allow from 102.212.82.5 to any port 500 proto udp
@@ -266,7 +307,7 @@ If you succeed, proceed. If you get locked out, use the AWS EC2 Instance Connect
 
 ## Step 6: AWS Security Group (Cloud Firewall)
 
-In the AWS Console, add inbound rules to the security group attached to UAT/PROD instance:
+In the AWS Console, add inbound rules to the security group attached to the UAT/PROD instance:
 
 | Type        | Protocol | Port Range | Source            |
 |-------------|----------|------------|-------------------|
@@ -274,7 +315,7 @@ In the AWS Console, add inbound rules to the security group attached to UAT/PROD
 | Custom UDP  | UDP      | 4500       | 102.212.82.5/32   |
 | Custom TCP  | TCP      | 7782       | 196.45.159.14/32  |
 | Custom TCP  | TCP      | 7782       | 196.45.159.17/32  |
-| SSH  | TCP | 22        | <YOUR - CLIENT - IP> or 0.0.0.0/0 |
+| SSH         | TCP      | 22         | <YOUR-CLIENT-IP>/32 or 0.0.0.0/0 |
 
 ---
 
@@ -313,7 +354,9 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 ```
-Example entries made on the test server:
+
+Example (test server):
+
 ```
 [Unit]
 Description=Add VPN public IP to loopback
@@ -326,7 +369,6 @@ RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
-
 ```
 
 Enable and start the service:
@@ -377,10 +419,10 @@ Also check the byte counters (`bytes_i` and `bytes_o`) – they may be zero unti
 
 ## Step 9: Coordinate with NBC
 
-Provide NBC with the following information if not captured in the set up form:
+Provide NBC with the following information if not captured in the setup form:
 
 - UAT/PROD **public IP** (`<PUBLIC_IP>`).
-- The **PSK** (Agree on which PSK to use).
+- The **PSK** (agree on which PSK to use).
 - Request them to **update their Phase‑2 Remote Address** to `<UAT/PROD-PUBLIC_IP>/32` (they may also need to remove any old IPs if they are no longer used).
 - Confirm that IKE parameters match (AES256, SHA256, DH20).
 
@@ -394,7 +436,7 @@ sudo systemctl restart strongswan-starter
 
 ## Step 10: Test Inbound Connectivity
 
-To verify that NBC can reach UAT/PROD server through the tunnel, start a test listener:
+To verify that NBC can reach the UAT/PROD server through the tunnel, start a test listener:
 
 ```bash
 sudo python3 -m http.server 7782
@@ -423,37 +465,338 @@ To set up the same VPN on a different AWS EC2 instance (e.g., UAT or PROD), **re
 
 ---
 
-## Troubleshooting Cheatsheet
+# Part 2: Adding a Second Partner Bank — Stanbic Bank
 
-| Symptom | Likely Cause | Fix |
-|---------|--------------|-----|
-| Phase 1 fails (`no acceptable proposal`) | Algorithm mismatch | Verify `ike=` and `esp=` lines match NBC’s proposal. Try removing `!` to be more permissive, or double‑check DH group. |
-| Phase 1 fails (`authentication failed`) | PSK mismatch or wrong `rightid` | Ensure PSK matches exactly and `rightid=10.100.0.17`. |
-| Phase 2 fails (`TS_UNACCEPT`) | Traffic selector mismatch | Ensure `leftsubnet` equals UAT/PROD public IP/32 and NBC has added that IP as Remote Address. |
-| Tunnel up but no traffic | Public IP not on loopback | Add IP to `lo` (see Step 7). |
-| No incoming SYN‑ACK replies | `ufw` blocking or kernel not accepting IP | Check `ufw` rules and the loopback alias. |
-| Connection works, then stops | Re‑authentication issue | Check logs; ensure `dpdaction=restart` and firewall allows keep‑alive. |
-| StrongSwan not starting | Syntax error in config | Run `sudo ipsec start --nofork` to see errors. |
+This section shows how to **add Stanbic Bank as a second peer** alongside the already‑working NBC tunnel. **Do not modify the NBC `conn` stanza** — you are only **appending** a new `conn` block and a new PSK line.
 
-### Useful Commands
+Because StrongSwan supports multiple `conn` stanzas in `/etc/ipsec.conf`, both tunnels run simultaneously on the same AWS instance, using the same public IP (`63.178.83.38`) but different peers, algorithms, and Phase‑2 selectors.
 
-| Command | Purpose |
-|---------|---------|
-| `sudo ipsec statusall` | Show full tunnel status and installed SAs. |
-| `sudo journalctl -u strongswan-starter -f` | Real‑time logs. |
-| `sudo tcpdump -i any port 500 or port 4500 -n` | Capture IKE/ESP packets. |
-| `sudo tcpdump -i any port 7782 -n` | Monitor test traffic. |
-| `ip addr show lo` | Verify loopback alias. |
-| `sudo ufw status numbered` | List firewall rules. |
-| `sudo systemctl status add-vpn-ip.service` | Check loopback alias service. |
+## Overview of Stanbic’s Parameters
+
+Extracted from the Stanbic form (SITE TO SITE VPN FORM – Stanbic DR and UAT):
+
+| Parameter | Stanbic Value |
+|-----------|---------------|
+| Peer Public IP (`right`) | `196.8.216.18` |
+| Peer Tunnel ID (`rightid`) | `196.8.216.18` (same as peer IP) |
+| Peer Encryption Domain (their side) | `196.8.216.94/32` (UAT), `196.8.216.90/32` (DR) |
+| Your Encryption Domain (`leftsubnet`) | `63.178.83.38/32` |
+| Service Port | `7782/TCP` |
+| Authentication Method | **Pre‑Shared Key** |
+| IKE Version | IKEv2 |
+| Phase 1 DH Group | **Group 19 (ECP256)** |
+| Phase 1 Encryption | AES 256 |
+| Phase 1 Hash | SHA2 (`sha256`) |
+| Phase 1 Mode | Main mode |
+| Phase 1 Lifetime | **86400s (1440 min)** |
+| Phase 2 Encapsulation | ESP |
+| Phase 2 Encryption | AES 256 |
+| Phase 2 Authentication | SHA2 (`sha256`) |
+| Phase 2 PFS | **NO PFS** |
+| Phase 2 Lifetime | 3600s |
+
+> **Key differences from NBC:** Different DH group (ECP256 vs ECP384), **no PFS**, and longer Phase‑1 lifetime. Make sure these are set correctly, or the tunnel will not come up.
 
 ---
 
-## Final Notes
+## Step 11: Update `/etc/ipsec.conf` (Append Stanbic Conn)
 
-- This documentation is tailored for AWS EC2 with NAT. If you ever deploy on a server with a directly‑assigned public IP, you can set `left=<PUBLIC_IP>` instead of the private IP.
-- Always test the firewall rules carefully (Step 5) to avoid losing SSH access.
-- Keep the loopback alias service enabled so the IP survives reboots.
+Edit the file:
+
+```bash
+sudo nano /etc/ipsec.conf
+```
+
+**Keep the existing `config setup`, `conn %default`, and `conn nbc-to-lolla` sections unchanged.** Append the following `conn` block at the end of the file:
+
+```
+conn stanbic-to-lolla
+    left=10.0.4.83                    # Same private IP as NBC
+    leftid=63.178.83.38               # Same public IP
+    leftsubnet=63.178.83.38/32        # Same local selector
+    leftfirewall=yes
+
+    right=196.8.216.18                # Stanbic Checkpoint public IP
+    rightid=196.8.216.18              # Stanbic tunnel ID (same as peer IP)
+    rightsubnet=196.8.216.94/32,196.8.216.90/32
+
+    auto=start
+    type=tunnel
+
+    ike=aes256-sha256-ecp256!         # Group 19 = ECP256
+    esp=aes256-sha256!                # No DH group in esp = PFS disabled
+    pfs=no
+
+    ikelifetime=86400s                # 1440 minutes
+    keylife=3600s
+
+    dpdaction=restart
+    dpddelay=30s
+    dpdtimeout=120s
+```
+
+### Why These Values
+
+| Setting | Reason |
+|---------|--------|
+| `left=10.0.4.83` | Bind to the same private interface. Both conns share it. |
+| `leftid=63.178.83.38` | Present the same public identity to Stanbic. |
+| `leftsubnet=63.178.83.38/32` | The bank requires a public IP for interesting traffic; private ranges are not accepted. |
+| `rightid=196.8.216.18` | Stanbic’s Checkpoint uses its public IP as identity (unlike NBC which uses an internal ID `10.100.0.17`). |
+| `ike=...ecp256!` | Group 19 = ECP256, as specified in the Stanbic form. |
+| `esp=aes256-sha256!` **and** `pfs=no` | Stanbic requires **NO PFS**. Omitting a DH group from `esp` and explicitly setting `pfs=no` is the correct way to disable PFS. |
+| `ikelifetime=86400s` | 1440 minutes, per the form. |
+
+Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
+
+### Reference: Full `/etc/ipsec.conf` After Adding Stanbic
+
+Your final file should look like this (assuming PROD `63.178.83.38` / `10.0.4.83`):
+
+```
+config setup
+    charondebug="ike 2, knl 2, cfg 2"
+    uniqueids=no
+
+conn %default
+    ikelifetime=28800s
+    keylife=3600s
+    rekeymargin=3m
+    keyingtries=1
+    keyexchange=ikev2
+    authby=psk
+    mobike=no
+
+conn nbc-to-lolla
+    left=10.0.4.83
+    leftid=63.178.83.38
+    leftsubnet=63.178.83.38/32
+    leftfirewall=yes
+    right=102.212.82.5
+    rightid=10.100.0.17
+    rightsubnet=196.45.159.14/32,196.45.159.17/32
+    auto=start
+    type=tunnel
+    ike=aes256-sha256-ecp384!
+    esp=aes256-sha256-ecp384!
+    dpdaction=restart
+    dpddelay=30s
+    dpdtimeout=120s
+
+conn stanbic-to-lolla
+    left=10.0.4.83
+    leftid=63.178.83.38
+    leftsubnet=63.178.83.38/32
+    leftfirewall=yes
+    right=196.8.216.18
+    rightid=196.8.216.18
+    rightsubnet=196.8.216.94/32,196.8.216.90/32
+    auto=start
+    type=tunnel
+    ike=aes256-sha256-ecp256!
+    esp=aes256-sha256!
+    pfs=no
+    ikelifetime=86400s
+    keylife=3600s
+    dpdaction=restart
+    dpddelay=30s
+    dpdtimeout=120s
+```
+
+---
+
+## Step 12: Add Stanbic’s PSK to `/etc/ipsec.secrets`
+
+Edit the secrets file:
+
+```bash
+sudo nano /etc/ipsec.secrets
+```
+
+**Keep the existing NBC line** and append a **new line for Stanbic**:
+
+```
+63.178.83.38 102.212.82.5 : PSK "<NBC_PSK>"
+63.178.83.38 196.8.216.18 : PSK "<STANBIC_PSK>"
+```
+
+> Generate a **separate PSK** for Stanbic (`openssl rand -base64 32`) — do **not** reuse the NBC PSK.
+>
+> Ensure the file is still root‑only:
+> ```bash
+> sudo chmod 600 /etc/ipsec.secrets
+> ```
+
+---
+
+## Step 13: Firewall / Security Group Updates for Stanbic
+
+### 13.1 AWS Security Group
+
+Add the following **inbound** rules in the AWS Console (in addition to the existing NBC rules):
+
+| Type       | Protocol | Port Range | Source            | Purpose |
+|------------|----------|------------|-------------------|---------|
+| Custom UDP | UDP      | 500        | 196.8.216.18/32   | IKE (Phase 1) |
+| Custom UDP | UDP      | 4500       | 196.8.216.18/32   | IPsec NAT‑T |
+| Custom TCP | TCP      | 7782       | 196.8.216.94/32   | UAT service port |
+| Custom TCP | TCP      | 7782       | 196.8.216.90/32   | DR service port |
+
+### 13.2 `ufw` (if enabled)
+
+If you are running `ufw`, add:
+
+```bash
+sudo ufw allow from 196.8.216.18 to any port 500 proto udp
+sudo ufw allow from 196.8.216.18 to any port 4500 proto udp
+sudo ufw allow from 196.8.216.94 to any port 7782 proto tcp
+sudo ufw allow from 196.8.216.90 to any port 7782 proto tcp
+sudo ufw reload
+```
+
+---
+
+## Step 14: Restart StrongSwan and Verify Both Tunnels
+
+```bash
+sudo systemctl restart strongswan-starter
+```
+
+Check status:
+
+```bash
+sudo ipsec statusall
+```
+
+You should see **two connections**, and after the peers respond, **two sets of Security Associations**:
+
+```
+Connections:
+nbc-to-lolla:      10.0.4.83...102.212.82.5   IKEv2
+stanbic-to-lolla:  10.0.4.83...196.8.216.18   IKEv2
+
+Security Associations (2 up, 0 connecting):
+nbc-to-lolla[1]:      ESTABLISHED ...
+stanbic-to-lolla[2]:  ESTABLISHED ...
+```
+
+Look for `INSTALLED` Child SAs under each connection:
+
+- **NBC:** `63.178.83.38/32 === 196.45.159.14/32` and `...196.45.159.17/32`
+- **Stanbic:** `63.178.83.38/32 === 196.8.216.94/32` and `...196.8.216.90/32`
+
+If either is missing, check the logs:
+
+```bash
+sudo journalctl -u strongswan-starter -f
+```
+
+---
+
+## Step 15: Coordinate with Stanbic
+
+Fill the Stanbic form (column C – Lolla) as follows and return it to them:
+
+| Field | Lolla Value |
+|-------|-------------|
+| **Primary Name** | Michael Muniu |
+| **Primary Email** | mmuniu@abnosoftwares.com |
+| **Primary Mobile** | +254 788 156 444 |
+| **VPN Gateway IP Address** | `63.178.83.38` |
+| **VPN Device Description** | StrongSwan on AWS EC2 (Ubuntu) |
+| **VPN Device Version** | StrongSwan 5.9.x |
+| **VPN Device Location** | AWS Cloud (eu-central-1) |
+| **Encryption Domain** | `63.178.83.38/32` |
+| **Service Port** | `7782 (TCP)` |
+| **Authentication Method** | Pre‑Shared Key |
+| **Encryption Scheme** | IKE v2 |
+| **Diffie‑Hellman Group** | Group 19 |
+| **Encryption Algorithm** | AES 256 |
+| **Hashing Algorithm** | SHA256 |
+| **Main or Aggressive Mode** | Main mode |
+| **Phase 1 Lifetime** | 1440 minutes (86400 s) |
+| **Phase 2 Encapsulation** | ESP |
+| **Phase 2 Encryption** | AES 256 |
+| **Phase 2 Authentication** | SHA256 |
+| **Perfect Forward Secrecy** | NO PFS |
+| **Phase 2 Lifetime** | 3600s |
+
+Then send Stanbic an email with:
+
+- **Your Public IP:** `63.178.83.38` (Remote Address on their firewall)
+- **PSK:** send via Signal / encrypted email — **never** in plain email
+- **Service Port:** `7782/TCP`
+- Ask them to confirm when the Checkpoint policy is applied.
+
+Once they confirm, restart StrongSwan:
+
+```bash
+sudo systemctl restart strongswan-starter
+```
+
+---
+
+## Step 16: Test Inbound Connectivity from Stanbic
+
+Start a listener on the service port:
+
+```bash
+sudo python3 -m http.server 7782
+```
+
+Ask Stanbic to connect (from their UAT `196.8.216.94` or DR `196.8.216.90`):
+
+```
+telnet 63.178.83.38 7782
+```
+
+Monitor packets on your side:
+
+```bash
+sudo tcpdump -i any port 7782 -n
+```
+
+You should see incoming `SYN` from `196.8.216.94`/`.90` and outgoing `SYN‑ACK` from `63.178.83.38`.  
+Also verify `sudo ipsec statusall` — the **Stanbic** child SA’s `bytes_i` and `bytes_o` should increment.
+
+---
+
+## Stanbic‑Specific Troubleshooting
+
+| Symptom | Likely Cause | Fix |
+|---------|--------------|-----|
+| Phase 1 fails with `no acceptable proposal` | Wrong DH group (used ECP384 instead of ECP256) | Ensure `ike=aes256-sha256-ecp256!` (Group 19). |
+| Phase 1 fails with `authentication failed` | PSK mismatch or wrong `rightid` | Confirm PSK matches; ensure `rightid=196.8.216.18` (public IP, not an internal ID). |
+| Phase 2 fails with `no acceptable proposal` | PFS still enabled | Ensure `pfs=no` **and** `esp=aes256-sha256!` (no DH group). |
+| Phase 2 fails with `TS_UNACCEPT` | Traffic selectors differ | Verify `leftsubnet=63.178.83.38/32` and `rightsubnet=196.8.216.94/32,196.8.216.90/32` — confirm Stanbic has added `63.178.83.38/32` as their Remote Address. |
+| Tunnel up but no traffic | Public IP missing on loopback | Confirm `ip addr show lo` lists `63.178.83.38/32` (Step 7). |
+| Only one tunnel established | `uniqueids` misconfigured | Keep `uniqueids=no` in `config setup` (already set). |
+| Re‑key failures | Mismatched lifetimes | Stanbic requires `ikelifetime=86400s`, `keylife=3600s`. |
+
+---
+
+## Interaction Between the Two Tunnels
+
+- Both `conn` blocks use the **same `left` / `leftid` / `leftsubnet`** but **different `right` peers**. StrongSwan keeps them separate because `right` is unique per conn.
+- `uniqueids=no` is **critical** here — it allows the same local identity to be used with multiple peers simultaneously.
+- Each peer will see the same public IP `63.178.83.38` on its side; the two tunnels do not interfere with each other’s encryption policies because their selectors and peers differ.
+- **No changes** to the NBC conn are required when adding Stanbic, and vice versa.
+
+---
+
+## Quick Reference
+
+| Command | Purpose |
+|---------|---------|
+| `sudo ipsec statusall` | Show all conns and installed SAs (both banks). |
+| `sudo ipsec status nbc-to-lolla` | Show NBC tunnel only. |
+| `sudo ipsec status stanbic-to-lolla` | Show Stanbic tunnel only. |
+| `sudo ipsec restart` | Restart StrongSwan (all tunnels). |
+| `sudo ipsec up stanbic-to-lolla` | Manually bring up the Stanbic tunnel. |
+| `sudo ipsec down stanbic-to-lolla` | Manually tear down the Stanbic tunnel. |
+| `sudo journalctl -u strongswan-starter -f` | Live logs (both tunnels). |
+| `sudo tcpdump -i any port 500 or port 4500 -n` | Capture IKE/IPsec packets for all peers. |
+| `sudo tcpdump -i any host 196.8.216.18 -n` | Capture traffic specific to Stanbic. |
 
 ---
 
